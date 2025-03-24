@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lecteur de fichiers M3U</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        .pagination {
+            display: flex;
+            justify-content: center;
+            margin-top: 20px;
+        }
+        .pagination button {
+            margin: 0 5px;
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+        .current-page {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+        }
+        .url-box {
+            padding: 10px;
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin: 10px 0;
+            word-break: break-all;
+        }
+        .copy-btn {
+            margin-left: 10px;
+            cursor: pointer;
+        }
+        .hidden {
+            display: none;
+        }
+        .search-container {
+            margin-bottom: 15px;
+        }
+        .search-input {
+            width: 100%;
+            padding: 8px;
+            font-size: 16px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        .highlight {
+            background-color: yellow;
+            font-weight: bold;
+        }
+        .no-results {
+            padding: 15px;
+            text-align: center;
+            font-style: italic;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <h1>Lecteur de fichiers M3U</h1>
+    
+    <div class="container">
+        <h2>Sélectionnez votre fichier M3U</h2>
+        <input type="file" id="fileInput" accept=".m3u,.m3u8">
+    </div>
+    
+    <div id="resultContainer" class="container hidden">
+        <h2>Chaînes trouvées</h2>
+        <p>Nombre total de chaînes: <span id="totalChannels">0</span></p>
+        
+        <div class="search-container">
+            <input type="text" id="searchInput" class="search-input" placeholder="Rechercher une chaîne...">
+        </div>
+        
+        <div id="selectedUrlContainer" class="hidden">
+            <h3>URL sélectionnée:</h3>
+            <div class="url-box" id="selectedUrl"></div>
+            <button id="copyBtn" class="copy-btn">Copier l'URL</button>
+        </div>
+        
+        <table id="channelsTable">
+            <thead>
+                <tr>
+                    <th>Nom de la chaîne</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody id="channelsBody"></tbody>
+        </table>
+        
+        <div class="pagination" id="pagination"></div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const fileInput = document.getElementById('fileInput');
+            const resultContainer = document.getElementById('resultContainer');
+            const totalChannels = document.getElementById('totalChannels');
+            const channelsBody = document.getElementById('channelsBody');
+            const pagination = document.getElementById('pagination');
+            const selectedUrlContainer = document.getElementById('selectedUrlContainer');
+            const selectedUrl = document.getElementById('selectedUrl');
+            const copyBtn = document.getElementById('copyBtn');
+            const searchInput = document.getElementById('searchInput');
+            
+            let allChannels = [];
+            let filteredChannels = [];
+            let currentPage = 1;
+            const itemsPerPage = 10;
+            
+            fileInput.addEventListener('change', function(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+                
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    parseM3U(e.target.result);
+                };
+                reader.readAsText(file);
+            });
+            
+            copyBtn.addEventListener('click', function() {
+                const textToCopy = selectedUrl.textContent;
+                navigator.clipboard.writeText(textToCopy)
+                    .then(() => {
+                        alert('URL copiée dans le presse-papiers!');
+                    })
+                    .catch(err => {
+                        console.error('Erreur lors de la copie: ', err);
+                    });
+            });
+            
+            searchInput.addEventListener('input', function() {
+                searchChannels(this.value);
+            });
+            
+            function parseM3U(content) {
+                allChannels = [];
+                const lines = content.split('\n');
+                
+                for (let i = 0; i < lines.length; i++) {
+                    if (lines[i].startsWith('#EXTINF:')) {
+                        const titleLine = lines[i];
+                        const urlLine = lines[i + 1] || '';
+                        
+                        if (urlLine && !urlLine.startsWith('#') && urlLine.trim() !== '') {
+                            // Extraire le nom de la chaîne
+                            const titleMatch = titleLine.match(/#EXTINF:-1,(.+)/);
+                            const title = titleMatch ? titleMatch[1].trim() : `Chaîne ${allChannels.length + 1}`;
+                            
+                            allChannels.push({
+                                title: title,
+                                url: urlLine.trim()
+                            });
+                        }
+                    }
+                }
+                
+                filteredChannels = [...allChannels];
+                totalChannels.textContent = allChannels.length;
+                resultContainer.classList.remove('hidden');
+                
+                displayChannels();
+                setupPagination();
+            }
+            
+            function searchChannels(query) {
+                currentPage = 1;
+                
+                if (query.trim() === '') {
+                    filteredChannels = [...allChannels];
+                    totalChannels.textContent = allChannels.length;
+                } else {
+                    query = query.toLowerCase();
+                    
+                    // Score-based fuzzy search
+                    const scoredChannels = allChannels.map(channel => {
+                        const titleLower = channel.title.toLowerCase();
+                        let score = 0;
+                        
+                        // Exact match gives highest score
+                        if (titleLower === query) {
+                            score += 100;
+                        }
+                        // Starting with query gives high score
+                        else if (titleLower.startsWith(query)) {
+                            score += 75;
+                        }
+                        // Contains query gives medium score
+                        else if (titleLower.includes(query)) {
+                            score += 50;
+                        }
+                        // Contains parts of query gives lower scores
+                        else {
+                            const queryParts = query.split(' ');
+                            for (const part of queryParts) {
+                                if (part.length > 2 && titleLower.includes(part)) {
+                                    score += 25;
+                                }
+                            }
+                        }
+                        
+                        return {
+                            channel: channel,
+                            score: score
+                        };
+                    });
+                    
+                    // Filter channels with score > 0 and sort by score
+                    const sortedChannels = scoredChannels
+                        .filter(item => item.score > 0)
+                        .sort((a, b) => b.score - a.score);
+                    
+                    filteredChannels = sortedChannels.map(item => item.channel);
+                    totalChannels.textContent = filteredChannels.length;
+                }
+                
+                displayChannels();
+                setupPagination();
+            }
+            
+            function highlightText(text, query) {
+                if (!query || query.trim() === '') {
+                    return text;
+                }
+                
+                const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+                return text.replace(regex, '<span class="highlight">$1</span>');
+            }
+            
+            function displayChannels() {
+                channelsBody.innerHTML = '';
+                
+                if (filteredChannels.length === 0) {
+                    const row = document.createElement('tr');
+                    const cell = document.createElement('td');
+                    cell.colSpan = 2;
+                    cell.className = 'no-results';
+                    cell.textContent = 'Aucune chaîne trouvée';
+                    row.appendChild(cell);
+                    channelsBody.appendChild(row);
+                    pagination.innerHTML = '';
+                    return;
+                }
+                
+                const startIndex = (currentPage - 1) * itemsPerPage;
+                const endIndex = Math.min(startIndex + itemsPerPage, filteredChannels.length);
+                
+                const query = searchInput.value.toLowerCase();
+                
+                for (let i = startIndex; i < endIndex; i++) {
+                    const channel = filteredChannels[i];
+                    const row = document.createElement('tr');
+                    
+                    const titleCell = document.createElement('td');
+                    titleCell.innerHTML = highlightText(channel.title, query);
+                    
+                    const actionCell = document.createElement('td');
+                    const viewBtn = document.createElement('button');
+                    viewBtn.textContent = 'Voir URL';
+                    viewBtn.addEventListener('click', function() {
+                        selectedUrl.textContent = channel.url;
+                        selectedUrlContainer.classList.remove('hidden');
+                    });
+                    
+                    actionCell.appendChild(viewBtn);
+                    row.appendChild(titleCell);
+                    row.appendChild(actionCell);
+                    
+                    channelsBody.appendChild(row);
+                }
+            }
+            
+            function setupPagination() {
+                pagination.innerHTML = '';
+                
+                const totalPages = Math.ceil(filteredChannels.length / itemsPerPage);
+                
+                if (totalPages <= 1) return;
+                
+                // Bouton précédent
+                const prevBtn = document.createElement('button');
+                prevBtn.textContent = 'Précédent';
+                prevBtn.disabled = currentPage === 1;
+                prevBtn.addEventListener('click', function() {
+                    if (currentPage > 1) {
+                        currentPage--;
+                        displayChannels();
+                        setupPagination();
+                    }
+                });
+                pagination.appendChild(prevBtn);
+                
+                // Afficher les numéros de page (max 5)
+                const maxPagesToShow = 5;
+                let startPage = Math.max(1, currentPage - Math.floor(maxPagesToShow / 2));
+                let endPage = Math.min(startPage + maxPagesToShow - 1, totalPages);
+                
+                if (endPage - startPage + 1 < maxPagesToShow) {
+                    startPage = Math.max(1, endPage - maxPagesToShow + 1);
+                }
+                
+                for (let i = startPage; i <= endPage; i++) {
+                    const pageBtn = document.createElement('button');
+                    pageBtn.textContent = i;
+                    if (i === currentPage) {
+                        pageBtn.classList.add('current-page');
+                    }
+                    
+                    pageBtn.addEventListener('click', function() {
+                        currentPage = i;
+                        displayChannels();
+                        setupPagination();
+                    });
+                    
+                    pagination.appendChild(pageBtn);
+                }
+                
+                // Bouton suivant
+                const nextBtn = document.createElement('button');
+                nextBtn.textContent = 'Suivant';
+                nextBtn.disabled = currentPage === totalPages;
+                nextBtn.addEventListener('click', function() {
+                    if (currentPage < totalPages) {
+                        currentPage++;
+                        displayChannels();
+                        setupPagination();
+                    }
+                });
+                pagination.appendChild(nextBtn);
+            }
+        });
+    </script>
+</body>
+</html>
