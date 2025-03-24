@@ -13,7 +13,7 @@ Un outil web simple pour parser et visualiser des fichiers M3U/M3U8.
 
 ## 🚀 Utilisation
 
-1. Téléchargez `index.html`
+1. Téléchargez `m3u-parser.html`
 2. Ouvrez dans un navigateur
 3. Sélectionnez votre fichier M3U
 4. Recherchez et explorez vos chaînes
